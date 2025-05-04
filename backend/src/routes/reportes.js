@@ -412,4 +412,148 @@ router.post('/membresias', async (req, res) => {
   }
 });
 
+// Endpoint para resumen del dashboard
+router.get('/dashboard', async (req, res) => {
+  try {
+    // 1) Total de Miembros
+    const membersRes = await pool.query('SELECT COUNT(*) AS count FROM Miembro');
+    const members = Number(membersRes.rows[0].count);
+
+    // 2) Total de Sesiones
+    const sessionsRes = await pool.query('SELECT COUNT(*) AS count FROM SesiónEntrenamiento');
+    const sessions = Number(sessionsRes.rows[0].count);
+
+    // 3) Total de Ejercicios
+    const exercisesRes = await pool.query(
+      'SELECT COUNT(DISTINCT EjercicioID) AS count FROM DetalleEntrenamiento'
+    );
+    const exercises = Number(exercisesRes.rows[0].count);
+
+    // 4) Total de Entrenadores
+    const trainersRes = await pool.query('SELECT COUNT(*) AS count FROM Entrenador');
+    const trainers = Number(trainersRes.rows[0].count);
+
+    // 5) Membresías Activas
+    const activeRes = await pool.query(
+      'SELECT COUNT(*) AS count FROM Membresía WHERE FechaFin >= CURRENT_DATE'
+    );
+    const activeMemberships = Number(activeRes.rows[0].count);
+
+    // 6) Retención de Miembros: porcentaje de renovaciones este mes vs mes pasado
+    const retentionRes = await pool.query(
+      `WITH this_month AS (
+          SELECT COUNT(DISTINCT MiembroID) AS c
+          FROM Membresía
+          WHERE DATE_TRUNC('month', FechaFin) = DATE_TRUNC('month', CURRENT_DATE)
+        ),
+        last_month AS (
+          SELECT COUNT(DISTINCT MiembroID) AS c
+          FROM Membresía
+          WHERE DATE_TRUNC('month', FechaFin) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+        )
+      SELECT
+        CASE WHEN last_month.c = 0 THEN 0
+             ELSE ROUND((this_month.c::decimal / last_month.c) * 100, 1)
+        END AS retention,
+        CASE WHEN last_month.c = 0 THEN 0
+             ELSE ROUND(((this_month.c - last_month.c)::decimal / last_month.c) * 100, 1)
+        END AS retention_change
+      FROM this_month, last_month;`
+    );
+    const { retention, retention_change } = retentionRes.rows[0];
+
+    // 7) Tasa de Crecimiento: nuevos miembros este mes vs mes pasado
+    const growthRes = await pool.query(
+      `WITH new_this AS (
+          SELECT COUNT(*) AS c
+          FROM Membresía
+          WHERE DATE_TRUNC('month', FechaInicio) = DATE_TRUNC('month', CURRENT_DATE)
+        ),
+        new_last AS (
+          SELECT COUNT(*) AS c
+          FROM Membresía
+          WHERE DATE_TRUNC('month', FechaInicio) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+        )
+      SELECT
+        CASE WHEN new_last.c = 0 THEN 0
+             ELSE ROUND((new_this.c::decimal / new_last.c) * 100, 1)
+        END AS growth_rate,
+        CASE WHEN new_last.c = 0 THEN 0
+             ELSE ROUND(((new_this.c - new_last.c)::decimal / new_last.c) * 100, 1)
+        END AS growth_change
+      FROM new_this, new_last;`
+    );
+    const { growth_rate, growth_change } = growthRes.rows[0];
+
+    // 8) Ingresos Totales: sumatoria de precios (PlanMembresía) iniciados este mes
+    const revenueRes = await pool.query(
+      `WITH rev_this AS (
+          SELECT COALESCE(SUM(pm.Precio), 0) AS total
+          FROM Membresía m
+          JOIN PlanMembresía pm ON m.PlanID = pm.PlanID
+          WHERE DATE_TRUNC('month', m.FechaInicio) = DATE_TRUNC('month', CURRENT_DATE)
+        ),
+        rev_last AS (
+          SELECT COALESCE(SUM(pm.Precio), 0) AS total
+          FROM Membresía m
+          JOIN PlanMembresía pm ON m.PlanID = pm.PlanID
+          WHERE DATE_TRUNC('month', m.FechaInicio) = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+        )
+      SELECT
+        rev_this.total AS revenue,
+        CASE WHEN rev_last.total = 0 THEN 0
+             ELSE ROUND(((rev_this.total - rev_last.total)::decimal / rev_last.total) * 100, 1)
+        END AS revenue_change
+      FROM rev_this, rev_last;`
+    );
+    const { revenue, revenue_change } = revenueRes.rows[0];
+
+    // 9) Duración Promedio de Sesión (minutos)
+    const durationRes = await pool.query(
+      `WITH dur_this AS (
+        SELECT AVG(dt."duración") AS avg_interval
+        FROM SesiónEntrenamiento se
+        JOIN DetalleEntrenamiento dt USING (SesiónID)
+        WHERE DATE_TRUNC('month', se."fecha") = DATE_TRUNC('month', CURRENT_DATE)
+      ),
+      dur_last AS (
+        SELECT AVG(dt."duración") AS avg_interval
+        FROM SesiónEntrenamiento se
+        JOIN DetalleEntrenamiento dt USING (SesiónID)
+        WHERE DATE_TRUNC('month', se."fecha") = DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+      )
+      SELECT
+        COALESCE(ROUND(EXTRACT(EPOCH FROM dur_this.avg_interval) / 60.0, 1), 0)        AS avg_duration,
+        COALESCE(
+          ROUND(
+            (EXTRACT(EPOCH FROM dur_this.avg_interval)
+          - EXTRACT(EPOCH FROM dur_last.avg_interval)) / 60.0
+          , 1)
+        , 0) AS duration_change
+      FROM dur_this, dur_last;
+      `
+    );
+    const { avg_duration, duration_change } = durationRes.rows[0];
+
+    res.json({
+      members,
+      sessions,
+      exercises,
+      trainers,
+      activeMemberships,
+      retention,
+      retention_change,
+      growth_rate,
+      growth_change,
+      revenue,
+      revenue_change,
+      avg_duration,
+      duration_change
+    });
+  } catch (err) {
+    console.error('Error en el resumen del dashboard:', err);
+    res.status(500).json({ error: 'No se pudieron obtener las estadísticas del dashboard', details: err.message });
+  }
+});
+
 module.exports = router;

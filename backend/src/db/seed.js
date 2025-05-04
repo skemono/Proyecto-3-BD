@@ -1,8 +1,8 @@
 const { Pool } = require('pg');
-const { Faker } = require('@faker-js/faker');
+const faker = require('@faker-js/faker').fakerES;
 require('dotenv').config();
 
-const faker = new Faker({ locale: 'es' });
+
 
 async function seedDatabase() {
   const pool = new Pool({
@@ -28,7 +28,7 @@ async function seedDatabase() {
         faker.person.fullName(),
         faker.date.past({ years: 40, refDate: '2005-01-01' }).toISOString().split('T')[0],
         faker.helpers.arrayElement(['M', 'F', 'O']),
-        (faker.number.int({ min: 150, max: 200 }) / 100).toFixed(2),
+        (faker.number.int({ min: 150, max: 200 })).toFixed(2),
         faker.date.recent({ days: 365 }).toISOString().split('T')[0],
       ]);
     }

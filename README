@@ -1,0 +1,13 @@
+
+#Se debe levantar el backend usando : 
+
+npm install 
+npm start 
+
+#Tambien se deben poner las credenciales de en un archivo .env para la conexión a la base de datos 
+
+#Por ultimo para levantar el frontend: 
+
+npm install 
+npm run dev 
+
